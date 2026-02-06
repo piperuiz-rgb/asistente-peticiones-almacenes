@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Asistente Peticiones Almacenes</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --text: #1f2a3d;
+      --muted: #6b778c;
+      --border: #e2e8f0;
+      --accent: #2d6cdf;       /* azul Joor-like */
+      --accent-2: #1f54b8;
+      --radius: 12px;
+      --shadow: 0 12px 28px rgba(17, 24, 39, 0.08);
+      --btn-bg: var(--accent);
+      --btn-text: #fff;
+      --btn-muted-bg: #eef2f8;
+      --btn-muted-text: #1f2a3d;
+      --hover: #e9edf5;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    header {
+      padding: 22px 5vw;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(135deg, #fafdff, #eef3fb);
+    }
+    h1 {
+      margin: 0;
+      font-weight: 700;
+      letter-spacing: 0.1px;
+      color: #162235;
+    }
+    main { padding: 22px 5vw 44px; }
+    .section {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px 20px;
+      margin-bottom: 16px;
+      border: 1px solid var(--border);
+    }
+    h3 {
+      margin: 0 0 10px 0;
+      font-weight: 700;
+      color: #22314a;
+    }
+    h4 { margin: 0 0 8px 0; font-weight: 700; color: #22314a; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    input[type="text"], input[type="date"], select, input[type="file"] {
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      min-width: 220px;
+      background: #fff;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    input[type="text"]:focus, input[type="date"]:focus, select:focus, input[type="file"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(45, 108, 223, 0.15);
+    }
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: 0.15s ease;
+      letter-spacing: 0.2px;
+    }
+    .btn-primary { background: var(--btn-bg); color: var(--btn-text); }
+    .btn-primary:hover { background: var(--accent-2); }
+    .btn-ghost { background: var(--btn-muted-bg); color: var(--btn-muted-text); }
+    .btn-ghost:hover { background: var(--hover); }
+    .muted { color: var(--muted); font-size: 14px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px;
+      font-size: 14px;
+      text-align: left;
+    }
+    th { background: #f1f4fa; color: #1f2a3d; font-weight: 700; }
+    td.controls { text-align: center; white-space: nowrap; }
+    .hidden { display: none; }
+    .stepper { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .step {
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #fff;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .active {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 8px 18px rgba(45,108,223,0.28);
+    }
+  </style>
+</head>
+<body>
+<header><h1>Asistente Peticiones Almacenes</h1></header>
+<main>
+  <div class="stepper" id="stepper"></div>
+
+  <!-- Paso 1 -->
+  <section class="section" id="step1">
+    <h3>Bienvenida</h3>
+    <p class="muted">Inicia el proceso de petición entre almacenes.</p>
+    <button class="btn-primary" onclick="goStep(2)">Iniciar petición</button>
+  </section>
+
+  <!-- Paso 2 -->
+  <section class="section hidden" id="step2">
+    <h3>Datos de la petición</h3>
+    <div class="row">
+      <select id="origin">
+        <option value="">Origen (elige)</option>
+        <option>ALM-01</option><option>ALM-02</option><option>ALM-03</option>
+      </select>
+      <select id="dest">
+        <option value="">Destino (elige)</option>
+        <option>ALM-11</option><option>ALM-12</option><option>ALM-13</option>
+      </select>
+      <input id="fecha" type="date" />
+      <input id="pedidoRef" type="text" placeholder="Referencia de la petición" />
+    </div>
+    <div style="margin-top:12px;">
+      <button class="btn-primary" onclick="goStep(3)">Siguiente</button>
+    </div>
+  </section>
+
+  <!-- Paso 3 -->
+  <section class="section hidden" id="step3">
+    <h3>Importar ventas (opcional)</h3>
+    <input id="ventasFile" type="file" />
+    <div style="margin-top:10px;">
+      <button class="btn-primary" onclick="uploadVentas()">Cargar y precargar carrito</button>
+      <button class="btn-ghost" onclick="goStep(4)">Omitir</button>
+    </div>
+    <div id="ventasStatus" class="muted" style="margin-top:8px;"></div>
+  </section>
+
+  <!-- Paso 4 -->
+  <section class="section hidden" id="step4">
+    <h3>Alta manual (buscador)</h3>
+    <div class="row">
+      <input id="searchInput" type="text" placeholder="Referencia o nombre" />
+      <button class="btn-primary" onclick="doSearch()">Buscar</button>
+    </div>
+    <div id="searchResults"></div>
+    <div style="margin-top:12px;">
+      <button class="btn-primary" onclick="goStep(5)">Siguiente</button>
+    </div>
+  </section>
+
+  <!-- Paso 5 -->
+  <section class="section hidden" id="step5">
+    <h3>Revisión del carrito</h3>
+    <div id="cartView"></div>
+    <div style="margin-top:12px;">
+      <button class="btn-ghost" onclick="goStep(4)">Atrás</button>
+      <button class="btn-primary" onclick="goStep(6)">Continuar a exportar</button>
+    </div>
+  </section>
+
+  <!-- Paso 6 -->
+  <section class="section hidden" id="step6">
+    <h3>Exportar</h3>
+    <p class="muted">Se generará un XLSX usando la plantilla del repositorio.</p>
+    <div class="row" style="margin-bottom:8px;">
+      <button class="btn-primary" onclick="downloadCheckout('xlsx')">Descargar XLSX</button>
+      <button class="btn-ghost" onclick="downloadCheckout('csv')">Descargar CSV</button>
+    </div>
+    <div class="muted">Origen/Destino/Fecha/Pedido se toman del paso 2.</div>
+  </section>
+</main>
+
+<script>
+const API_BASE = "http://127.0.0.1:8000";
+let currentStep = 1;
+
+function renderStepper() {
+  const steps = ["Bienvenida","Datos","Importar ventas","Alta manual","Revisión","Exportar"];
+  const el = document.getElementById("stepper");
+  el.innerHTML = steps.map((t,i)=>`<div class="step ${currentStep===i+1?'active':''}">${i+1}. ${t}</div>`).join("");
+}
+function goStep(n) {
+  currentStep = n;
+  renderStepper();
+  for (let i=1;i<=6;i++) {
+    document.getElementById("step"+i).classList.toggle("hidden", i!==n);
+  }
+  if (n===5) refreshCart();
+}
+renderStepper();
+
+async function doSearch() {
+  const q = document.getElementById("searchInput").value.trim();
+  if (!q) return;
+  const res = await fetch(`${API_BASE}/products/search?q=${encodeURIComponent(q)}`);
+  const data = await res.json();
+  renderSearch(data);
+}
+
+function renderSearch(items) {
+  const container = document.getElementById("searchResults");
+  container.innerHTML = "";
+  if (!items.length) { container.innerHTML = "<p class='muted'>Sin resultados</p>"; return; }
+  items.forEach(item => {
+    const div = document.createElement("div");
+    div.className = "section";
+    const title = item.nombre ? `${item.ref} - ${item.nombre}` : item.ref;
+    div.innerHTML = `<h4>${title}</h4>`;
+    const table = document.createElement("table");
+    table.innerHTML = `
+      <thead><tr><th>Color</th><th>Talla</th><th>EAN</th><th>Acciones</th></tr></thead>
+      <tbody>
+      ${item.variantes.map(v => `
+        <tr>
+          <td>${v.color ?? ""}</td>
+          <td>${v.talla ?? ""}</td>
+          <td>${v.ean ?? ""}</td>
+          <td class="controls">
+            <button class="btn-primary" style="padding:6px 10px;" onclick="cartAdd('${item.ref}','${v.color ?? ""}','${v.talla ?? ""}',1)">+</button>
+            <button class="btn-ghost" style="padding:6px 10px;" onclick="cartAdd('${item.ref}','${v.color ?? ""}','${v.talla ?? ""}',-1)">-</button>
+          </td>
+        </tr>
+      `).join("")}
+      </tbody>`;
+    div.appendChild(table);
+    container.appendChild(div);
+  });
+}
+
+async function cartAdd(ref, color, talla, qty) {
+  await fetch(`${API_BASE}/cart/add`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ref, color: color || null, talla: talla || null, qty})
+  });
+  refreshCart();
+}
+
+async function refreshCart() {
+  const res = await fetch(`${API_BASE}/cart/view`);
+  const data = await res.json();
+  renderCart(data.items || []);
+}
+
+function renderCart(items) {
+  const container = document.getElementById("cartView");
+  if (!items.length) { container.innerHTML = "<p class='muted'>Carrito vacío</p>"; return; }
+  const table = document.createElement("table");
+  table.innerHTML = `
+    <thead><tr><th>Ref</th><th>Color</th><th>Talla</th><th>EAN</th><th>Cantidad</th></tr></thead>
+    <tbody>
+    ${items.map(it => `
+      <tr>
+        <td>${it.ref}</td><td>${it.color ?? ""}</td><td>${it.talla ?? ""}</td>
+        <td>${it.ean ?? ""}</td><td>${it.qty}</td>
+      </tr>`).join("")}
+    </tbody>`;
+  container.innerHTML = "";
+  container.appendChild(table);
+}
+
+async function downloadCheckout(fmt) {
+  const origin = encodeURIComponent(document.getElementById("origin").value || "");
+  const dest = encodeURIComponent(document.getElementById("dest").value || "");
+  const fecha = encodeURIComponent(document.getElementById("fecha").value || "");
+  const pedido = encodeURIComponent(document.getElementById("pedidoRef").value || "");
+  const res = await fetch(`${API_BASE}/cart/checkout?format=${fmt}&origin=${origin}&destination=${dest}&fecha=${fecha}&pedido_ref=${pedido}`);
+  if (!res.ok) { alert("Error al descargar"); return; }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fmt === "xlsx" ? "cart_checkout.xlsx" : "cart_checkout.csv";
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+async function uploadVentas() {
+  const input = document.getElementById("ventasFile");
+  if (!input.files.length) { alert("Selecciona un archivo"); return; }
+  const form = new FormData();
+  form.append("file", input.files[0]);
+  const res = await fetch(`${API_BASE}/request/upload`, { method:"POST", body: form });
+  if (!res.ok) { document.getElementById("ventasStatus").innerText = "Error cargando"; return; }
+  const data = await res.json();
+  document.getElementById("ventasStatus").innerText = `Cargado (${data.rows} filas). Id: ${data.request_id}`;
+}
+</script>
+</body>
+</html>
