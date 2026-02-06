@@ -299,18 +299,22 @@ async def cart_checkout(
 
     # XLSX con plantilla
     if not plantilla_path_default.exists():
-        # fallback sin plantilla
         return _export_df(merged, "xlsx", "cart_checkout")
 
     wb = openpyxl.load_workbook(plantilla_path_default)
-    ws = wb.active if "Pedido" not in wb.sheetnames else wb["Pedido"]
-    start_row = 2  # provisional
-    columns_order = ["Origen", "Destino", "Fecha", "Pedido", "Ref", "Color", "Talla", "EAN", "Cantidad"]
+    ws = wb.active  # única hoja (primera)
+
+    start_row = 2  # datos desde fila 2
     row_idx = start_row
     for _, r in merged.iterrows():
-        for col_idx, col_name in enumerate(columns_order, start=1):
-            ws.cell(row=row_idx, column=col_idx, value=r.get(col_name))
+        ws.cell(row=row_idx, column=1, value=r.get("Fecha"))          # A: Fecha
+        ws.cell(row=row_idx, column=2, value=r.get("Origen"))         # B: Almacén de origen
+        ws.cell(row=row_idx, column=3, value=r.get("Destino"))        # C: Almacén de destino
+        ws.cell(row=row_idx, column=4, value=pedido_ref)              # D: Observaciones = referencia de pedido
+        ws.cell(row=row_idx, column=5, value=r.get("EAN"))            # E: EAN
+        ws.cell(row=row_idx, column=6, value=r.get("Cantidad"))       # F: Cantidad
         row_idx += 1
+
     buff = io.BytesIO()
     wb.save(buff)
     buff.seek(0)
