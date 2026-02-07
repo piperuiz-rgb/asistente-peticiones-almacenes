@@ -140,11 +140,24 @@
 
   <!-- Paso 3 -->
   <section class="section hidden" id="step3">
-    <h3>Importar ventas (opcional)</h3>
-    <input id="ventasFile" type="file" />
+    <h3>Importar catálogo y ventas (opcional)</h3>
+    
+    <h4>1. Catálogo (opcional)</h4>
+    <p class="muted">Si no subes un catálogo, se usará el catálogo por defecto (catalogue.xlsx).</p>
+    <input id="catalogFile" type="file" accept=".xlsx,.xls,.csv" />
+    <div style="margin-top:10px;">
+      <button class="btn-primary" onclick="uploadCatalog()">Subir catálogo</button>
+    </div>
+    <div id="catalogStatus" class="muted" style="margin-top:8px;"></div>
+    
+    <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border);" />
+    
+    <h4>2. Ventas (opcional)</h4>
+    <p class="muted">Sube un archivo de ventas para precargar el carrito automáticamente.</p>
+    <input id="ventasFile" type="file" accept=".xlsx,.xls,.csv" />
     <div style="margin-top:10px;">
       <button class="btn-primary" onclick="uploadVentas()">Cargar y precargar carrito</button>
-      <button class="btn-ghost" onclick="goStep(4)">Omitir</button>
+      <button class="btn-ghost" onclick="goStep(4)">Omitir e ir al buscador</button>
     </div>
     <div id="ventasStatus" class="muted" style="margin-top:8px;"></div>
   </section>
@@ -185,8 +198,10 @@
 </main>
 
 <script>
-const API_BASE = "http://127.0.0.1:8000";
+// Derive API_BASE from current host, pointing to backend port 8000
+const API_BASE = `${window.location.protocol}//${window.location.hostname}:8000`;
 let currentStep = 1;
+let catalogId = null;  // Store uploaded catalog ID
 
 function renderStepper() {
   const steps = ["Bienvenida","Datos","Importar ventas","Alta manual","Revisión","Exportar"];
@@ -206,9 +221,24 @@ renderStepper();
 async function doSearch() {
   const q = document.getElementById("searchInput").value.trim();
   if (!q) return;
-  const res = await fetch(`${API_BASE}/products/search?q=${encodeURIComponent(q)}`);
-  const data = await res.json();
-  renderSearch(data);
+  
+  try {
+    // Pass catalog_id if available
+    const url = catalogId 
+      ? `${API_BASE}/products/search?q=${encodeURIComponent(q)}&catalog_id=${catalogId}`
+      : `${API_BASE}/products/search?q=${encodeURIComponent(q)}`;
+    
+    const res = await fetch(url);
+    if (!res.ok) {
+      alert("Error en la búsqueda");
+      return;
+    }
+    
+    const data = await res.json();
+    renderSearch(data);
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
 }
 
 function renderSearch(items) {
@@ -242,18 +272,37 @@ function renderSearch(items) {
 }
 
 async function cartAdd(ref, color, talla, qty) {
-  await fetch(`${API_BASE}/cart/add`, {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ref, color: color || null, talla: talla || null, qty})
-  });
-  refreshCart();
+  try {
+    const res = await fetch(`${API_BASE}/cart/add`, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ref, color: color || null, talla: talla || null, qty})
+    });
+    
+    if (!res.ok) {
+      alert("Error añadiendo al carrito");
+      return;
+    }
+    
+    await refreshCart();
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
 }
 
 async function refreshCart() {
-  const res = await fetch(`${API_BASE}/cart/view`);
-  const data = await res.json();
-  renderCart(data.items || []);
+  try {
+    const res = await fetch(`${API_BASE}/cart/view`);
+    if (!res.ok) {
+      console.error("Error obteniendo carrito");
+      return;
+    }
+    
+    const data = await res.json();
+    renderCart(data.items || []);
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+  }
 }
 
 function renderCart(items) {
@@ -261,12 +310,16 @@ function renderCart(items) {
   if (!items.length) { container.innerHTML = "<p class='muted'>Carrito vacío</p>"; return; }
   const table = document.createElement("table");
   table.innerHTML = `
-    <thead><tr><th>Ref</th><th>Color</th><th>Talla</th><th>EAN</th><th>Cantidad</th></tr></thead>
+    <thead><tr><th>Ref</th><th>Nombre</th><th>Color</th><th>Talla</th><th>EAN</th><th>Cantidad</th></tr></thead>
     <tbody>
     ${items.map(it => `
       <tr>
-        <td>${it.ref}</td><td>${it.color ?? ""}</td><td>${it.talla ?? ""}</td>
-        <td>${it.ean ?? ""}</td><td>${it.qty}</td>
+        <td>${it.ref}</td>
+        <td>${it.nombre ?? ""}</td>
+        <td>${it.color ?? ""}</td>
+        <td>${it.talla ?? ""}</td>
+        <td>${it.ean ?? ""}</td>
+        <td>${it.qty}</td>
       </tr>`).join("")}
     </tbody>`;
   container.innerHTML = "";
@@ -274,29 +327,115 @@ function renderCart(items) {
 }
 
 async function downloadCheckout(fmt) {
-  const origin = encodeURIComponent(document.getElementById("origin").value || "");
-  const dest = encodeURIComponent(document.getElementById("dest").value || "");
-  const fecha = encodeURIComponent(document.getElementById("fecha").value || "");
-  const pedido = encodeURIComponent(document.getElementById("pedidoRef").value || "");
-  const res = await fetch(`${API_BASE}/cart/checkout?format=${fmt}&origin=${origin}&destination=${dest}&fecha=${fecha}&pedido_ref=${pedido}`);
-  if (!res.ok) { alert("Error al descargar"); return; }
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fmt === "xlsx" ? "cart_checkout.xlsx" : "cart_checkout.csv";
-  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  try {
+    const origin = encodeURIComponent(document.getElementById("origin").value || "");
+    const dest = encodeURIComponent(document.getElementById("dest").value || "");
+    const fecha = encodeURIComponent(document.getElementById("fecha").value || "");
+    const pedido = encodeURIComponent(document.getElementById("pedidoRef").value || "");
+    const res = await fetch(`${API_BASE}/cart/checkout?format=${fmt}&origin=${origin}&destination=${dest}&fecha=${fecha}&pedido_ref=${pedido}`);
+    if (!res.ok) { 
+      alert("Error al descargar: " + await res.text()); 
+      return; 
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fmt === "xlsx" ? "cart_checkout.xlsx" : "cart_checkout.csv";
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
+}
+
+async function uploadCatalog() {
+  const input = document.getElementById("catalogFile");
+  const statusEl = document.getElementById("catalogStatus");
+  if (!input.files.length) { 
+    alert("Selecciona un archivo de catálogo"); 
+    return; 
+  }
+  
+  try {
+    const form = new FormData();
+    form.append("file", input.files[0]);
+    statusEl.innerText = "Subiendo catálogo...";
+    
+    const res = await fetch(`${API_BASE}/catalog/upload`, { method:"POST", body: form });
+    if (!res.ok) { 
+      const error = await res.text();
+      statusEl.innerText = `Error cargando catálogo: ${error}`; 
+      return; 
+    }
+    
+    const data = await res.json();
+    catalogId = data.catalog_id;  // Store catalog_id globally
+    statusEl.innerText = `✓ Catálogo cargado: ${data.rows} filas (ID: ${catalogId})`;
+  } catch (error) {
+    statusEl.innerText = `Error: ${error.message}`;
+  }
 }
 
 async function uploadVentas() {
   const input = document.getElementById("ventasFile");
-  if (!input.files.length) { alert("Selecciona un archivo"); return; }
-  const form = new FormData();
-  form.append("file", input.files[0]);
-  const res = await fetch(`${API_BASE}/request/upload`, { method:"POST", body: form });
-  if (!res.ok) { document.getElementById("ventasStatus").innerText = "Error cargando"; return; }
-  const data = await res.json();
-  document.getElementById("ventasStatus").innerText = `Cargado (${data.rows} filas). Id: ${data.request_id}`;
+  const statusEl = document.getElementById("ventasStatus");
+  if (!input.files.length) { 
+    alert("Selecciona un archivo de ventas"); 
+    return; 
+  }
+  
+  try {
+    // Step 1: Upload sales file
+    const form = new FormData();
+    form.append("file", input.files[0]);
+    statusEl.innerText = "Subiendo ventas...";
+    
+    const uploadRes = await fetch(`${API_BASE}/request/upload`, { method:"POST", body: form });
+    if (!uploadRes.ok) { 
+      const error = await uploadRes.text();
+      statusEl.innerText = `Error cargando ventas: ${error}`; 
+      return; 
+    }
+    
+    const uploadData = await uploadRes.json();
+    const requestId = uploadData.request_id;
+    statusEl.innerText = `Ventas cargadas (${uploadData.rows} filas). Realizando match...`;
+    
+    // Step 2: Match and preload cart
+    // Use catalogId if uploaded, otherwise backend will use default
+    const matchRes = await fetch(`${API_BASE}/match-and-preload`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        catalog_id: catalogId,
+        request_id: requestId
+      })
+    });
+    
+    if (!matchRes.ok) {
+      const error = await matchRes.text();
+      statusEl.innerText = `Error en match: ${error}`;
+      return;
+    }
+    
+    const matchData = await matchRes.json();
+    
+    // Refresh cart to show preloaded items
+    await refreshCart();
+    
+    // Show match status
+    const msg = `✓ Match completo: ${matchData.encontrados} encontrados, ${matchData.no_encontrados} no encontrados. Carrito precargado con ${matchData.cart_items} items.`;
+    statusEl.innerHTML = msg;
+    
+    // Add link to export missing if any
+    if (matchData.no_encontrados > 0 && matchData.match_id) {
+      const exportLink = `<br/><a href="${API_BASE}/match/${matchData.match_id}/export?type=missing&format=xlsx" download style="color:var(--accent);text-decoration:underline;">Descargar items no encontrados (${matchData.no_encontrados})</a>`;
+      statusEl.innerHTML += exportLink;
+    }
+    
+  } catch (error) {
+    statusEl.innerText = `Error: ${error.message}`;
+  }
 }
 </script>
 </body>

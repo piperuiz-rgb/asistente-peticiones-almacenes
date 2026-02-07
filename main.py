@@ -108,7 +108,7 @@ def _export_df(df: pd.DataFrame, fmt: str, filename: str) -> StreamingResponse:
         raise HTTPException(400, "Formato no soportado (csv|xlsx)")
 
 class MatchRequest(BaseModel):
-    catalog_id: str
+    catalog_id: str | None = None  # Allow None to use default catalog
     request_id: str
 
 class CartLine(BaseModel):
@@ -165,10 +165,19 @@ async def upload_request(file: UploadFile = File(...)):
 
 @app.post("/match")
 async def do_match(body: MatchRequest):
-    cat_df = catalogs.get(body.catalog_id)
+    # If no catalog_id provided, use default catalog
+    if body.catalog_id:
+        cat_df = catalogs.get(body.catalog_id)
+        if cat_df is None:
+            raise HTTPException(404, "Catálogo no encontrado")
+    else:
+        ensure_catalog_loaded()
+        cat_df = catalog_df
+    
     req_df = requests_store.get(body.request_id)
-    if cat_df is None or req_df is None:
-        raise HTTPException(404, "Catalogo o petición no encontrados")
+    if req_df is None:
+        raise HTTPException(404, "Petición no encontrada")
+    
     merged = req_df.merge(
         cat_df,
         on=["_ref", "_color", "_talla"],
@@ -187,6 +196,51 @@ async def do_match(body: MatchRequest):
         "preview": merged.head(20).to_dict(orient="records"),
     }
 
+@app.post("/match-and-preload")
+async def match_and_preload(body: MatchRequest):
+    """Match sales against catalog and preload cart with found items"""
+    # Perform match
+    match_result = await do_match(body)
+    match_id = match_result["match_id"]
+    
+    # Get the merged data
+    match_data = matches.get(match_id)
+    if match_data is None:
+        raise HTTPException(404, "Match no encontrado")
+    
+    merged = match_data["merged"]
+    
+    # Clear existing cart
+    cart.clear()
+    
+    # Preload cart with found items (those with EAN)
+    found_items = merged[merged["_ean"].notna()]
+    cart_items = 0
+    
+    for _, row in found_items.iterrows():
+        ref = row["_ref"]
+        color = row["_color"]
+        talla = row["_talla"]
+        qty = row.get("_qty", 1)
+        
+        # Handle NaN/None values
+        if pd.isna(qty) or qty is None:
+            qty = 1
+        else:
+            qty = int(qty)
+        
+        key = (ref, color, talla)
+        cart[key] = cart.get(key, 0) + qty
+        cart_items += 1
+    
+    return {
+        "match_id": match_id,
+        "total": match_result["total"],
+        "encontrados": match_result["encontrados"],
+        "no_encontrados": match_result["no_encontrados"],
+        "cart_items": cart_items,
+    }
+
 @app.get("/match/{match_id}/export")
 async def export_match(match_id: str, format: str = "xlsx", type: str = "all"):
     match = matches.get(match_id)
@@ -199,13 +253,21 @@ async def export_match(match_id: str, format: str = "xlsx", type: str = "all"):
 
 # --------- Búsqueda catálogo -----------
 @app.get("/products/search")
-async def search_products(q: str):
-    ensure_catalog_loaded()
+async def search_products(q: str, catalog_id: str | None = None):
+    # Use uploaded catalog if catalog_id provided, otherwise use default
+    if catalog_id:
+        cat_df = catalogs.get(catalog_id)
+        if cat_df is None:
+            raise HTTPException(404, "Catálogo no encontrado")
+    else:
+        ensure_catalog_loaded()
+        cat_df = catalog_df
+    
     q_lower = q.lower()
-    mask = catalog_df["_ref"].str.lower().str.contains(q_lower, na=False)
-    if "_nombre" in catalog_df.columns and catalog_df["_nombre"] is not None:
-        mask = mask | catalog_df["_nombre"].fillna("").str.lower().str.contains(q_lower, na=False)
-    found = catalog_df[mask].copy()
+    mask = cat_df["_ref"].str.lower().str.contains(q_lower, na=False)
+    if "_nombre" in cat_df.columns and cat_df["_nombre"] is not None:
+        mask = mask | cat_df["_nombre"].fillna("").str.lower().str.contains(q_lower, na=False)
+    found = cat_df[mask].copy()
     results = {}
     for _, row in found.iterrows():
         ref = row["_ref"]
