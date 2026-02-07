@@ -291,12 +291,35 @@ async function downloadCheckout(fmt) {
 async function uploadVentas() {
   const input = document.getElementById("ventasFile");
   if (!input.files.length) { alert("Selecciona un archivo"); return; }
+  
+  const statusEl = document.getElementById("ventasStatus");
+  statusEl.innerText = "Procesando...";
+  
   const form = new FormData();
   form.append("file", input.files[0]);
-  const res = await fetch(`${API_BASE}/request/upload`, { method:"POST", body: form });
-  if (!res.ok) { document.getElementById("ventasStatus").innerText = "Error cargando"; return; }
-  const data = await res.json();
-  document.getElementById("ventasStatus").innerText = `Cargado (${data.rows} filas). Id: ${data.request_id}`;
+  
+  try {
+    const res = await fetch(`${API_BASE}/import-and-match`, { method: "POST", body: form });
+    if (!res.ok) { 
+      statusEl.innerText = "Error al procesar el archivo"; 
+      return; 
+    }
+    
+    const data = await res.json();
+    
+    // Display summary
+    statusEl.innerHTML = `
+      ✅ <strong>${data.encontrados}</strong> productos cargados al carrito<br>
+      ❌ <strong>${data.no_encontrados}</strong> no encontrados en catálogo
+      ${data.no_encontrados > 0 ? `<br><a href="${API_BASE}/match/${data.import_id}/export?type=missing&format=xlsx" target="_blank">Descargar no encontrados</a>` : ''}
+    `;
+    
+    // Refresh cart
+    refreshCart();
+    
+  } catch (err) {
+    statusEl.innerText = "Error de conexión";
+  }
 }
 </script>
 </body>

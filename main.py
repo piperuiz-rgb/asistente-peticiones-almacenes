@@ -71,10 +71,19 @@ def load_catalog_file(path: Path) -> pd.DataFrame:
     ean_col = colmap.get("ean") or colmap.get("codbarras")
     color_col = colmap.get("color")
     talla_col = colmap.get("talla")
-    parsed = cat[ref_col].apply(parse_ref)
-    cat["_ref"] = parsed.apply(lambda x: x["ref"])
-    cat["_color"] = cat[color_col] if color_col else parsed.apply(lambda x: x["color"])
-    cat["_talla"] = cat[talla_col] if talla_col else parsed.apply(lambda x: x["talla"])
+    
+    # If we have separate columns for color and talla, use Referencia directly
+    # Otherwise parse from the format [REF] (Color, Talla)
+    if color_col and talla_col:
+        cat["_ref"] = cat[ref_col].astype(str).str.strip()
+        cat["_color"] = cat[color_col]
+        cat["_talla"] = cat[talla_col]
+    else:
+        parsed = cat[ref_col].apply(parse_ref)
+        cat["_ref"] = parsed.apply(lambda x: x["ref"])
+        cat["_color"] = parsed.apply(lambda x: x["color"])
+        cat["_talla"] = parsed.apply(lambda x: x["talla"])
+    
     cat["_ean"] = cat[ean_col] if ean_col else None
     cat["_nombre"] = cat.get("Nombre", None)
     return cat
@@ -163,6 +172,58 @@ async def upload_request(file: UploadFile = File(...)):
     rid = uuid.uuid4().hex[:12]
     requests_store[rid] = df
     return {"request_id": rid, "rows": len(df)}
+
+@app.post("/import-and-match")
+async def import_and_match(file: UploadFile = File(...)):
+    # 1. Read sales file
+    df = read_table(file)
+    
+    # 2. Determine quantity column BEFORE parsing (to avoid column index issues)
+    if len(df.columns) >= 3:
+        qty_col = df.columns[2]  # Column C
+    else:
+        qty_col = df.columns[1]  # Column B
+    
+    # 3. Parse column A to extract ref, color, talla
+    prod_col = df.columns[0]
+    parsed = df[prod_col].apply(parse_ref)
+    df["_ref"] = parsed.apply(lambda x: x["ref"])
+    df["_color"] = parsed.apply(lambda x: x["color"])
+    df["_talla"] = parsed.apply(lambda x: x["talla"])
+    df["_qty"] = pd.to_numeric(df[qty_col], errors='coerce').fillna(1).astype(int)
+    
+    # 4. Load default catalog
+    ensure_catalog_loaded()
+    
+    # 5. Cross-reference with catalog
+    merged = df.merge(
+        catalog_df[["_ref", "_color", "_talla", "_ean", "_nombre"]],
+        on=["_ref", "_color", "_talla"],
+        how="left"
+    )
+    
+    # 6. Clear cart and load found products
+    cart.clear()
+    found = merged[merged["_ean"].notna()]
+    not_found = merged[merged["_ean"].isna()]
+    
+    for _, row in found.iterrows():
+        key = (row["_ref"], row["_color"], row["_talla"])
+        qty = int(row["_qty"]) if pd.notna(row["_qty"]) else 1
+        cart[key] = cart.get(key, 0) + qty
+    
+    # 7. Save not found for possible export
+    import_id = uuid.uuid4().hex[:12]
+    matches[import_id] = {"merged": merged, "not_found": not_found}
+    
+    return {
+        "success": True,
+        "total": len(df),
+        "encontrados": len(found),
+        "no_encontrados": len(not_found),
+        "cart_items": len(cart),
+        "import_id": import_id
+    }
 
 @app.post("/match")
 async def do_match(body: MatchRequest):
