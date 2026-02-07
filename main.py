@@ -335,3 +335,6 @@ from fastapi.staticfiles import StaticFiles
 # ... deja intactos los endpoints anteriores ...
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
+from fastapi.staticfiles import StaticFiles
+
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
