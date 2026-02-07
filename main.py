@@ -17,7 +17,8 @@ plantilla_path_default = Path("plantilla_pedido.xlsx")  # provisional
 catalogs = {}
 requests_store = {}
 matches = {}
-cart = {}  # key: (ref,color,talla) -> qty
+cart = {}  # key: (ref,color,talla) -> qty (productos añadidos manualmente)
+cart_imported = {}  # key: (ref,color,talla) -> qty (productos importados)
 
 REF_PATTERN = re.compile(r"\[([^\]]+)\]")
 PAREN_PATTERN = re.compile(r"\(([^)]*)\)")
@@ -168,6 +169,59 @@ async def upload_request(file: UploadFile = File(...)):
     requests_store[rid] = df
     return {"request_id": rid, "rows": len(df)}
 
+@app.post("/import-and-match")
+async def import_and_match(file: UploadFile = File(...)):
+    """Import sales file, match with catalog, and load into cart_imported"""
+    # 1. Read the sales file
+    df = read_table(file)
+    
+    # 2. Parse column A to extract ref, color, size
+    prod_col = df.columns[0]
+    parsed = df[prod_col].apply(parse_ref)
+    df["_ref"] = parsed.apply(lambda x: x["ref"])
+    df["_color"] = parsed.apply(lambda x: x["color"])
+    df["_talla"] = parsed.apply(lambda x: x["talla"])
+    
+    # 3. Get quantity from column B or C
+    if len(df.columns) >= 3:
+        qty_col = df.columns[2]
+    else:
+        qty_col = df.columns[1]
+    df["_qty"] = pd.to_numeric(df[qty_col], errors='coerce').fillna(1).astype(int)
+    
+    # 4. Load default catalog
+    ensure_catalog_loaded()
+    
+    # 5. Cross-reference with catalog
+    merged = df.merge(
+        catalog_df[["_ref", "_color", "_talla", "_ean", "_nombre"]],
+        on=["_ref", "_color", "_talla"],
+        how="left"
+    )
+    
+    # 6. Load found products into cart_imported
+    cart_imported.clear()
+    found = merged[merged["_ean"].notna()]
+    not_found = merged[merged["_ean"].isna()]
+    
+    for _, row in found.iterrows():
+        key = (row["_ref"], row["_color"], row["_talla"])
+        qty = int(row["_qty"]) if pd.notna(row["_qty"]) else 1
+        cart_imported[key] = cart_imported.get(key, 0) + qty
+    
+    # 7. Save not found items for export
+    import_id = uuid.uuid4().hex[:12]
+    matches[import_id] = {"merged": merged, "not_found": not_found}
+    
+    return {
+        "success": True,
+        "total": len(df),
+        "encontrados": len(found),
+        "no_encontrados": len(not_found),
+        "cart_items": len(cart_imported),
+        "import_id": import_id
+    }
+
 @app.post("/match")
 async def do_match(body: MatchRequest):
     cat_df = catalogs.get(body.catalog_id)
@@ -230,10 +284,12 @@ async def search_products(q: str):
 async def cart_add(line: CartLine):
     ensure_catalog_loaded()
     key = (line.ref, line.color, line.talla)
-    cart[key] = cart.get(key, 0) + line.qty
-    if cart[key] <= 0:
-        cart.pop(key, None)
-    return {"ok": True, "items": len(cart)}
+    # Determine which cart the item is in, or add to manual cart
+    target_cart = cart_imported if key in cart_imported else cart
+    target_cart[key] = target_cart.get(key, 0) + line.qty
+    if target_cart[key] <= 0:
+        target_cart.pop(key, None)
+    return {"ok": True, "items": len(cart) + len(cart_imported)}
 
 @app.post("/cart/remove")
 async def cart_remove(line: CartLine):
@@ -244,27 +300,59 @@ async def cart_remove(line: CartLine):
             cart.pop(key, None)
     return {"ok": True, "items": len(cart)}
 
+@app.post("/cart/update")
+async def cart_update(line: CartLine):
+    """Update exact quantity of a product"""
+    ensure_catalog_loaded()
+    key = (line.ref, line.color, line.talla)
+    
+    # Find which cart contains the item
+    if key in cart_imported:
+        if line.qty <= 0:
+            cart_imported.pop(key, None)
+        else:
+            cart_imported[key] = line.qty
+    elif key in cart:
+        if line.qty <= 0:
+            cart.pop(key, None)
+        else:
+            cart[key] = line.qty
+    
+    return {"ok": True}
+
 @app.get("/cart/view")
 async def cart_view():
     ensure_catalog_loaded()
-    rows = []
-    for (ref, color, talla), qty in cart.items():
-        row = catalog_df[
-            (catalog_df["_ref"] == ref)
-            & (catalog_df["_color"] == color)
-            & (catalog_df["_talla"] == talla)
-        ]
-        ean = row["_ean"].iloc[0] if len(row) else None
-        nombre = row["_nombre"].iloc[0] if len(row) and "_nombre" in row.columns else None
-        rows.append({
-            "ref": ref,
-            "color": color,
-            "talla": talla,
-            "ean": ean,
-            "qty": qty,
-            "nombre": nombre,
-        })
-    return {"items": rows}
+    
+    def enrich_items(cart_dict, source):
+        rows = []
+        for (ref, color, talla), qty in cart_dict.items():
+            row = catalog_df[
+                (catalog_df["_ref"] == ref)
+                & (catalog_df["_color"] == color)
+                & (catalog_df["_talla"] == talla)
+            ]
+            ean = row["_ean"].iloc[0] if len(row) else None
+            nombre = row["_nombre"].iloc[0] if len(row) and "_nombre" in row.columns else None
+            rows.append({
+                "ref": ref,
+                "color": color,
+                "talla": talla,
+                "ean": ean,
+                "qty": qty,
+                "nombre": nombre,
+                "source": source  # "imported" or "manual"
+            })
+        return rows
+    
+    imported_items = enrich_items(cart_imported, "imported")
+    manual_items = enrich_items(cart, "manual")
+    
+    return {
+        "imported": imported_items,
+        "manual": manual_items,
+        "total_items": len(imported_items) + len(manual_items)
+    }
 
 # --------- Checkout con metadatos y plantilla -----------
 @app.get("/cart/checkout")
@@ -276,8 +364,10 @@ async def cart_checkout(
     pedido_ref: str = ""
 ):
     ensure_catalog_loaded()
+    # Combine both carts for checkout
+    all_items = {**cart_imported, **cart}
     data = []
-    for (ref, color, talla), qty in cart.items():
+    for (ref, color, talla), qty in all_items.items():
         row = catalog_df[
             (catalog_df["_ref"] == ref)
             & (catalog_df["_color"] == color)
