@@ -331,8 +331,11 @@ async def cart_checkout(
 
 
 from fastapi.staticfiles import StaticFiles
-
+from fastapi.responses import FileResponse
 # ... deja intactos los endpoints anteriores ...
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+@app.get("/", include_in_schema=False)
+async def serve_index():
+    return FileResponse(Path(__file__).parent / "static" / "index.html")
 
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
