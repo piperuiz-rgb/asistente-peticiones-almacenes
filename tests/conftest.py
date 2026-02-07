@@ -10,8 +10,9 @@ import openpyxl
 @pytest.fixture(autouse=True)
 def reset_cart():
     """Reset cart state before each test"""
-    from main import cart, catalogs, requests_store, matches
+    from main import cart, cart_imported, catalogs, requests_store, matches
     cart.clear()
+    cart_imported.clear()
     # Don't clear catalogs, requests_store, matches as they don't affect other tests
 
 

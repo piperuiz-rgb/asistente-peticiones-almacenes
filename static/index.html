@@ -224,20 +224,38 @@ function renderSearch(items) {
     table.innerHTML = `
       <thead><tr><th>Color</th><th>Talla</th><th>EAN</th><th>Acciones</th></tr></thead>
       <tbody>
-      ${item.variantes.map(v => `
-        <tr>
-          <td>${v.color ?? ""}</td>
-          <td>${v.talla ?? ""}</td>
-          <td>${v.ean ?? ""}</td>
-          <td class="controls">
-            <button class="btn-primary" style="padding:6px 10px;" onclick="cartAdd('${item.ref}','${v.color ?? ""}','${v.talla ?? ""}',1)">+</button>
-            <button class="btn-ghost" style="padding:6px 10px;" onclick="cartAdd('${item.ref}','${v.color ?? ""}','${v.talla ?? ""}',-1)">-</button>
-          </td>
-        </tr>
-      `).join("")}
+      ${item.variantes.map(v => {
+        const variantId = `qty_${item.ref}_${v.color || ''}_${v.talla || ''}`.replace(/[^a-zA-Z0-9]/g, '_');
+        return `
+          <tr>
+            <td>${v.color ?? ""}</td>
+            <td>${v.talla ?? ""}</td>
+            <td>${v.ean ?? ""}</td>
+            <td class="controls">
+              <button class="btn-ghost" style="padding:6px 10px;" onclick="cartAddWithCounter('${item.ref}','${v.color ?? ""}','${v.talla ?? ""}',-1,'${variantId}')">−</button>
+              <span id="${variantId}" style="margin:0 8px; font-weight:bold; min-width:20px; display:inline-block; text-align:center;">0</span>
+              <button class="btn-primary" style="padding:6px 10px;" onclick="cartAddWithCounter('${item.ref}','${v.color ?? ""}','${v.talla ?? ""}',1,'${variantId}')">+</button>
+            </td>
+          </tr>
+        `;
+      }).join("")}
       </tbody>`;
     div.appendChild(table);
     container.appendChild(div);
+  });
+}
+
+async function cartAddWithCounter(ref, color, talla, qty, counterId) {
+  const counterEl = document.getElementById(counterId);
+  let current = parseInt(counterEl.innerText) || 0;
+  current += qty;
+  if (current < 0) current = 0;
+  counterEl.innerText = current;
+  
+  await fetch(`${API_BASE}/cart/add`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ref, color: color || null, talla: talla || null, qty})
   });
 }
 
@@ -253,7 +271,81 @@ async function cartAdd(ref, color, talla, qty) {
 async function refreshCart() {
   const res = await fetch(`${API_BASE}/cart/view`);
   const data = await res.json();
-  renderCart(data.items || []);
+  renderCartSeparated(data.imported || [], data.manual || []);
+}
+
+function renderCartSeparated(imported, manual) {
+  const container = document.getElementById("cartView");
+  container.innerHTML = "";
+  
+  if (!imported.length && !manual.length) {
+    container.innerHTML = "<p class='muted'>Carrito vacío</p>";
+    return;
+  }
+  
+  // Section: Imported products
+  if (imported.length) {
+    const section1 = document.createElement("div");
+    section1.innerHTML = `<h4>📥 Productos importados (${imported.length})</h4>`;
+    section1.appendChild(createEditableTable(imported));
+    container.appendChild(section1);
+  }
+  
+  // Section: Manual products
+  if (manual.length) {
+    const section2 = document.createElement("div");
+    section2.style.marginTop = "20px";
+    section2.innerHTML = `<h4>🔍 Productos del buscador (${manual.length})</h4>`;
+    section2.appendChild(createEditableTable(manual));
+    container.appendChild(section2);
+  }
+}
+
+function createEditableTable(items) {
+  const table = document.createElement("table");
+  table.innerHTML = `
+    <thead><tr>
+      <th>Ref</th><th>Nombre</th><th>Color</th><th>Talla</th><th>EAN</th><th>Cantidad</th>
+    </tr></thead>
+    <tbody>
+    ${items.map(it => {
+      const itemId = `cart_${it.ref}_${it.color || ''}_${it.talla || ''}`.replace(/[^a-zA-Z0-9]/g, '_');
+      return `
+        <tr>
+          <td>${it.ref}</td>
+          <td>${it.nombre ?? ""}</td>
+          <td>${it.color ?? ""}</td>
+          <td>${it.talla ?? ""}</td>
+          <td>${it.ean ?? ""}</td>
+          <td class="controls">
+            <button class="btn-ghost" style="padding:4px 8px;" onclick="updateCartQty('${it.ref}','${it.color ?? ""}','${it.talla ?? ""}',-1,'${itemId}')">−</button>
+            <span id="${itemId}" style="margin:0 8px; font-weight:bold; min-width:30px; display:inline-block; text-align:center;">${it.qty}</span>
+            <button class="btn-primary" style="padding:4px 8px;" onclick="updateCartQty('${it.ref}','${it.color ?? ""}','${it.talla ?? ""}',1,'${itemId}')">+</button>
+          </td>
+        </tr>
+      `;
+    }).join("")}
+    </tbody>`;
+  return table;
+}
+
+async function updateCartQty(ref, color, talla, delta, counterId) {
+  const counterEl = document.getElementById(counterId);
+  let current = parseInt(counterEl.innerText) || 0;
+  current += delta;
+  if (current < 0) current = 0;
+  counterEl.innerText = current;
+  
+  await fetch(`${API_BASE}/cart/add`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ref, color: color || null, talla: talla || null, qty: delta})
+  });
+  
+  // If it reaches 0, refresh everything to remove the row
+  if (current <= 0) {
+    setTimeout(refreshCart, 300);
+  }
 }
 
 function renderCart(items) {
@@ -291,12 +383,31 @@ async function downloadCheckout(fmt) {
 async function uploadVentas() {
   const input = document.getElementById("ventasFile");
   if (!input.files.length) { alert("Selecciona un archivo"); return; }
+  
+  const statusEl = document.getElementById("ventasStatus");
+  statusEl.innerText = "Procesando...";
+  
   const form = new FormData();
   form.append("file", input.files[0]);
-  const res = await fetch(`${API_BASE}/request/upload`, { method:"POST", body: form });
-  if (!res.ok) { document.getElementById("ventasStatus").innerText = "Error cargando"; return; }
-  const data = await res.json();
-  document.getElementById("ventasStatus").innerText = `Cargado (${data.rows} filas). Id: ${data.request_id}`;
+  
+  try {
+    const res = await fetch(`${API_BASE}/import-and-match`, { method: "POST", body: form });
+    if (!res.ok) { 
+      statusEl.innerText = "Error al procesar el archivo"; 
+      return; 
+    }
+    
+    const data = await res.json();
+    
+    statusEl.innerHTML = `
+      ✅ <strong>${data.encontrados}</strong> productos cargados al carrito<br>
+      ❌ <strong>${data.no_encontrados}</strong> no encontrados en catálogo
+      ${data.no_encontrados > 0 ? `<br><a href="${API_BASE}/match/${data.import_id}/export?type=missing&format=xlsx" target="_blank">Descargar no encontrados</a>` : ''}
+    `;
+    
+  } catch (err) {
+    statusEl.innerText = "Error de conexión";
+  }
 }
 </script>
 </body>

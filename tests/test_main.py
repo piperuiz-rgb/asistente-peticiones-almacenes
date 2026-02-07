@@ -196,8 +196,12 @@ async def test_cart_view(client: AsyncClient):
     response = await client.get("/cart/view")
     assert response.status_code == 200
     data = response.json()
-    assert "items" in data
-    assert isinstance(data["items"], list)
+    assert "imported" in data
+    assert "manual" in data
+    assert "total_items" in data
+    assert data["total_items"] == 2
+    assert isinstance(data["imported"], list)
+    assert isinstance(data["manual"], list)
 
 
 @pytest.mark.asyncio
@@ -289,8 +293,132 @@ async def test_cart_add_negative_quantity(client: AsyncClient):
     
     # View cart to verify
     cart_response = await client.get("/cart/view")
-    items = cart_response.json()["items"]
+    data = cart_response.json()
+    # Items are in manual cart (since not imported)
+    items = data["manual"]
     # Should still have 2 items (5 - 3)
     matching_item = [item for item in items if item["ref"] == "REF001"]
     if matching_item:
         assert matching_item[0]["qty"] == 2
+
+
+@pytest.mark.asyncio
+async def test_import_and_match(client: AsyncClient, test_request_file):
+    """Test the import-and-match endpoint that loads products directly into cart"""
+    # Import and match in one step
+    files = {"file": ("sales.xlsx", test_request_file, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    response = await client.post("/import-and-match", files=files)
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert "total" in data
+    assert "encontrados" in data
+    assert "no_encontrados" in data
+    assert "cart_items" in data
+    assert "import_id" in data
+    assert data["total"] == 3
+    # The actual match count depends on the default catalog
+    # Just verify the response structure is correct
+
+
+@pytest.mark.asyncio
+async def test_import_and_match_export_missing(client: AsyncClient, test_request_file):
+    """Test exporting missing items from import-and-match"""
+    # Import and match
+    test_request_file.seek(0)
+    files = {"file": ("sales.xlsx", test_request_file, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    response = await client.post("/import-and-match", files=files)
+    import_id = response.json()["import_id"]
+    
+    # Export missing items
+    export_response = await client.get(f"/match/{import_id}/export?type=missing&format=xlsx")
+    assert export_response.status_code == 200
+    assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in export_response.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_cart_mixed_sources(client: AsyncClient, test_request_file):
+    """Test cart with both imported and manual items"""
+    # Import some items
+    files = {"file": ("sales.xlsx", test_request_file, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    await client.post("/import-and-match", files=files)
+    
+    # Add manual items
+    await client.post("/cart/add", json={
+        "ref": "REF003",
+        "color": "Negro",
+        "talla": "XL",
+        "qty": 3
+    })
+    
+    # View cart
+    cart_response = await client.get("/cart/view")
+    data = cart_response.json()
+    # Should have manual items
+    assert len(data["manual"]) > 0
+    # Total should be positive
+    assert data["total_items"] > 0
+
+
+@pytest.mark.asyncio
+async def test_cart_update_endpoint(client: AsyncClient):
+    """Test the cart update endpoint"""
+    # Add item to cart
+    await client.post("/cart/add", json={
+        "ref": "REF001",
+        "color": "Rojo",
+        "talla": "M",
+        "qty": 5
+    })
+    
+    # Update to exact quantity
+    response = await client.post("/cart/update", json={
+        "ref": "REF001",
+        "color": "Rojo",
+        "talla": "M",
+        "qty": 10
+    })
+    
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    
+    # Verify the quantity was updated
+    cart_response = await client.get("/cart/view")
+    data = cart_response.json()
+    items = data["manual"]
+    matching_item = [item for item in items if item["ref"] == "REF001"]
+    assert matching_item[0]["qty"] == 10
+
+
+@pytest.mark.asyncio
+async def test_cart_checkout_combined(client: AsyncClient, test_request_file):
+    """Test checkout combines both imported and manual items"""
+    # Import items
+    files = {"file": ("sales.xlsx", test_request_file, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    await client.post("/import-and-match", files=files)
+    
+    # Add manual item
+    await client.post("/cart/add", json={
+        "ref": "REF003",
+        "color": "Negro",
+        "talla": "XL",
+        "qty": 2
+    })
+    
+    # Checkout
+    response = await client.get(
+        "/cart/checkout",
+        params={
+            "format": "csv",
+            "origin": "Almacén A",
+            "destination": "Almacén B",
+            "fecha": "2026-02-07",
+            "pedido_ref": "PED-TEST"
+        }
+    )
+    
+    assert response.status_code == 200
+    # Should include the manual item
+    content = response.content.decode()
+    assert "REF003" in content  # From manual
