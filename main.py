@@ -328,13 +328,11 @@ async def cart_checkout(
 # Mount static files to serve UI from root path
 # This is placed after all API routes to ensure API routes take precedence
 # Serves index.html and other assets from static/ directory on port 8000
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
 
 from fastapi.staticfiles import StaticFiles
 
 # ... deja intactos los endpoints anteriores ...
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
-from fastapi.staticfiles import StaticFiles
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
