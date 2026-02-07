@@ -198,8 +198,17 @@
 </main>
 
 <script>
-// Derive API_BASE from current host, pointing to backend port 8000
-const API_BASE = `${window.location.protocol}//${window.location.hostname}:8000`;
+// Calcula API_BASE según entorno (Codespaces vs local)
+function getApiBase() {
+  const { protocol, hostname } = window.location;
+  // Codespaces: estáticos en -8001, backend en -8000
+  if (hostname.includes('-8001.') && hostname.endsWith('.app.github.dev')) {
+    return `${protocol}//${hostname.replace('-8001.', '-8000.')}`;
+  }
+  // Local: estáticos en 8001, backend en 8000
+  return `${protocol}//${hostname}:8000`;
+}
+const API_BASE = getApiBase();
 let currentStep = 1;
 let catalogId = null;  // Store uploaded catalog ID
 
@@ -437,6 +446,4 @@ async function uploadVentas() {
     statusEl.innerText = `Error: ${error.message}`;
   }
 }
-</script>
-</body>
-</html>
+}
