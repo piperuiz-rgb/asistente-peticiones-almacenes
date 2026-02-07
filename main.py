@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -7,16 +7,7 @@ import pandas as pd
 import uuid, re, io
 from pathlib import Path
 import openpyxl
-
-app = FastAPI(title="Asistente Peticiones Almacenes")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from contextlib import asynccontextmanager
 
 # Estado en memoria
 catalog_df = None
@@ -118,9 +109,22 @@ class CartLine(BaseModel):
     talla: str | None = None
     qty: int = 1
 
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
     ensure_catalog_loaded()
+    yield
+    # Shutdown (if needed in the future)
+
+app = FastAPI(title="Asistente Peticiones Almacenes", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --------- Importación ventas (independiente) -----------
 @app.post("/catalog/upload")
@@ -185,7 +189,7 @@ async def do_match(body: MatchRequest):
         "total": len(merged),
         "encontrados": int(merged["_ean"].notna().sum()),
         "no_encontrados": int(not_found.shape[0]),
-        "preview": merged.head(20).to_dict(orient="records"),
+        "preview": merged.head(20).fillna("").to_dict(orient="records"),
     }
 
 @app.get("/match/{match_id}/export")
@@ -328,11 +332,6 @@ async def cart_checkout(
 # Mount static files to serve UI from root path
 # This is placed after all API routes to ensure API routes take precedence
 # Serves index.html and other assets from static/ directory on port 8000
-
-
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pathlib import Path
 
 @app.get("/", include_in_schema=False)
 async def serve_index():
