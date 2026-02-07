@@ -70,10 +70,20 @@ def load_catalog_file(path: Path) -> pd.DataFrame:
     ean_col = colmap.get("ean") or colmap.get("codbarras")
     color_col = colmap.get("color")
     talla_col = colmap.get("talla")
-    parsed = cat[ref_col].apply(parse_ref)
-    cat["_ref"] = parsed.apply(lambda x: x["ref"])
-    cat["_color"] = cat[color_col] if color_col else parsed.apply(lambda x: x["color"])
-    cat["_talla"] = cat[talla_col] if talla_col else parsed.apply(lambda x: x["talla"])
+    
+    # For catalog, use direct columns if available, otherwise parse
+    if color_col and talla_col:
+        # Catalog has separate columns for ref, color, and talla
+        cat["_ref"] = cat[ref_col].astype(str)
+        cat["_color"] = cat[color_col]
+        cat["_talla"] = cat[talla_col]
+    else:
+        # Parse from combined format [ref] (color, talla)
+        parsed = cat[ref_col].apply(parse_ref)
+        cat["_ref"] = parsed.apply(lambda x: x["ref"])
+        cat["_color"] = parsed.apply(lambda x: x["color"])
+        cat["_talla"] = parsed.apply(lambda x: x["talla"])
+    
     cat["_ean"] = cat[ean_col] if ean_col else None
     cat["_nombre"] = cat.get("Nombre", None)
     return cat
@@ -130,11 +140,22 @@ async def upload_catalog(file: UploadFile = File(...)):
     ean_col = cat_cols.get("ean") or cat_cols.get("codbarras")
     color_col = cat_cols.get("color")
     talla_col = cat_cols.get("talla")
-    parsed = df[ref_col].apply(parse_ref)
-    df["_ref"] = parsed.apply(lambda x: x["ref"])
-    df["_color"] = df[color_col] if color_col else parsed.apply(lambda x: x["color"])
-    df["_talla"] = df[talla_col] if talla_col else parsed.apply(lambda x: x["talla"])
+    
+    # For catalog, use direct columns if available, otherwise parse
+    if color_col and talla_col:
+        # Catalog has separate columns for ref, color, and talla
+        df["_ref"] = df[ref_col].astype(str)
+        df["_color"] = df[color_col]
+        df["_talla"] = df[talla_col]
+    else:
+        # Parse from combined format [ref] (color, talla)
+        parsed = df[ref_col].apply(parse_ref)
+        df["_ref"] = parsed.apply(lambda x: x["ref"])
+        df["_color"] = parsed.apply(lambda x: x["color"])
+        df["_talla"] = parsed.apply(lambda x: x["talla"])
+    
     df["_ean"] = df[ean_col] if ean_col else None
+    df["_nombre"] = df.get("Nombre", None)
     cid = uuid.uuid4().hex[:12]
     catalogs[cid] = df
     return {"catalog_id": cid, "rows": len(df)}
