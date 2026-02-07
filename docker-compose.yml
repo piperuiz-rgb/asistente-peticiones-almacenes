@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: asistente-peticiones-almacenes
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source code for development
+      - ./main.py:/app/main.py
+      - ./static:/app/static
+      # Persist catalog data
+      - ./catalogue.xlsx:/app/catalogue.xlsx
+      - ./plantilla_pedido.xlsx:/app/plantilla_pedido.xlsx
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+    restart: unless-stopped
