@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import pandas as pd
 import uuid, re, io
@@ -323,3 +324,8 @@ async def cart_checkout(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="cart_checkout.xlsx"'},
     )
+
+# Mount static files to serve UI from root path
+# This is placed after all API routes to ensure API routes take precedence
+# Serves index.html and other assets from static/ directory on port 8000
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
